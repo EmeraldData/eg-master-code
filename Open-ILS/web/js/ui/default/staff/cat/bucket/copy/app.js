@@ -613,11 +613,15 @@ function($scope,  $q , $routeParams , $timeout , $window , $uibModal , bucketSvc
                 copies : cp_list
             }
         ).then(function(key) {
-            if (key) {
-                var url = egCore.env.basePath + 'cat/printlabels/' + key;
-                $timeout(function() { $window.open(url, '_blank') });
+            if (cp_list.length > 0 ) {
+                if (key) {
+                    var url = egCore.env.basePath + 'cat/printlabels/' + key;
+                    $timeout(function() { $window.open(url, '_blank') });
+                } else {
+                    alert('Could not create anonymous cache key!');
+                }
             } else {
-                alert('Could not create anonymous cache key!');
+                alert('Could not print label export');
             }
         });
     }

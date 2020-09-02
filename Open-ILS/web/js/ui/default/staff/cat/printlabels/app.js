@@ -117,8 +117,8 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
         },
         mode: {
             options: [
-                { label: "Spine Label", value: "spine-only" },
-                { label: "Pocket Label", value: "spine-pocket" }
+                { label: "Label 1 Only", value: "spine-only" },
+                { label: "Labels 1 & 2", value: "spine-pocket" }
             ],
             selected: "spine-pocket"
         },
@@ -164,9 +164,9 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
                 $scope.preview_scope = {
                     'copies': []
                     , 'settings': {}
-                    , 'toolbox_settings': JSON.parse(JSON.stringify(toolbox_settings))
+                    , 'toolbox_settings': toolbox_settings
                     , 'get_cn_for': function (copy) {
-                        var key = $scope.rendered_cn_key_by_copy_id[copy.id];
+                        var key = copy.id;
                         if (key) {
                             var manual_cn = $scope.rendered_call_number_set[key];
                             if (manual_cn && manual_cn.value) {
@@ -290,9 +290,18 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
 
                     $q.all(promises2).then(function () {
                         // today, staff, current_location, etc.
+                        $scope.preview_scope.copies.sort((a, b) => (data.copies.indexOf(a.id) > data.copies.indexOf(b.id)) ? 1 : ((data.copies.indexOf(b.id) > data.copies.indexOf(a.id)) ? -1 : 0));
                         egCore.print.fleshPrintScope($scope.preview_scope);
                         $scope.template_changed(); // load the default
                         $scope.rebuild_cn_set();
+                        if ($scope.preview_scope.toolbox_settings && $scope.template_name && $scope.print.template_content) {
+                            var re = /eg\_plt/i;
+                            if (re.test($scope.print.template_content)) {
+                                $scope.applyTemplate($scope.template_name);
+                                $scope.redraw_label_table();
+                            }
+                        }
+
                     });
 
                 });
@@ -335,7 +344,8 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
             $scope.preview_scope.settings[s] = $scope.templates[n].settings[s];
         }
         if ($scope.templates[n].toolbox_settings) {
-            $scope.preview_scope.toolbox_settings = JSON.parse(JSON.stringify($scope.templates[n].toolbox_settings));
+            $scope.preview_scope.toolbox_settings = $scope.templates[n].toolbox_settings;
+            $scope.create_print_label_table();
         }
         egCore.hatch.setItem('cat.printlabels.default_template', n);
         $scope.save_locally();
@@ -400,7 +410,7 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
         .then(
             function (html) {
                 $scope.print.template_content = html;
-                $scope.checkForToolboxCustomizations(html, true);
+                $scope.redraw_label_table();
             },
             function () {
                 $scope.print.template_content = '';
@@ -508,54 +518,64 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
             $scope.rendered_cn_key_by_copy_id = {};
             for (var i = 0; i < $scope.preview_scope.copies.length; i++) {
                 var copy = $scope.preview_scope.copies[i];
+                copy.rendered_cn = {};
                 var rendered_cn = document.getElementById('cn_for_copy_' + copy.id);
                 if (rendered_cn && rendered_cn.textContent) {
-                    var key = rendered_cn.textContent;
-                    if (typeof $scope.rendered_call_number_set[key] == 'undefined') {
-                        $scope.rendered_call_number_set[key] = {
-                            value: key
-                        };
-                    }
-                    $scope.rendered_cn_key_by_copy_id[copy.id] = key;
+                    $scope.rendered_call_number_set[copy.id] = {
+                        value : rendered_cn.textContent
+                    };
+                    copy.rendered_cn = rendered_cn; //{ value : rendered_cn.textContent };
+                    console.log(copy.rendered_cn.textContent);
                 }
             }
             $scope.preview_scope.tickle = Date() + ' ' + Math.random();
         });
     }
 
-    $scope.redraw_label_table = function () {
+    $scope.create_print_label_table = function () {
         if ($scope.print_label_form.$valid && $scope.print.template_content && $scope.preview_scope) {
             $scope.preview_scope.label_output_copies = labelOutputRowsFilter($scope.preview_scope.copies, $scope.preview_scope.toolbox_settings);
-            var d = new Date().getTime().toString();
             var html = $scope.print.template_content;
-            if ($scope.checkForToolboxCustomizations(html)) {
-                html = html.replace(/eg\_plt\_\d+/, "eg_plt_" + d);
-                $scope.print.template_content = html;
-            } else {
-                var table = "<table id=\"eg_plt_" + d + "_{{$index}}\" eg-print-label-table style=\"border-collapse: collapse; border: 0 solid transparent; border-spacing: 0; margin: {{$index === 0 ? toolbox_settings.page.margins.top.size : 0}} 0 0 0;\" class=\"custom-label-table{{$index % toolbox_settings.page.dimensions.rows === 0 && $index > 0 && toolbox_settings.feed_option.selected === 'sheet' ? ' page-break' : ''}}\" ng-init=\"parentIndex = $index\" ng-repeat=\"row in label_output_copies\">\n";
-                table += "<tr>\n";
-                table += "<td style=\"border: 0 solid transparent; padding: {{parentIndex % toolbox_settings.page.dimensions.rows === 0 && toolbox_settings.feed_option.selected === 'sheet' && parentIndex > 0 ? toolbox_settings.page.space_between_labels.vertical.size : parentIndex > 0 ? toolbox_settings.page.space_between_labels.vertical.size : 0}} 0 0 {{$index === 0 ? toolbox_settings.page.margins.left.size : col.styl ? col.styl : toolbox_settings.page.space_between_labels.horizontal.size}};\" ng-repeat=\"col in row.columns\">\n";
-                table += "<pre class=\"{{col.cls}}\" style=\"border: none; margin-bottom: 0; margin-top: 0; overflow: hidden;\" ng-if=\"col.cls === 'spine'\">\n";
-                table += "{{col.c ? get_cn_for(col.c) : ''}}";
-                table += "</pre>\n";
-                table += "<pre class=\"{{col.cls}}{{parentIndex % toolbox_settings.page.dimensions.rows === 0 && parentIndex > 0 && toolbox_settings.feed_option.selected === 'sheet' ? ' page-break' : ''}}\" style=\"border: none;  margin-bottom: 0; margin-top: 0; overflow: hidden;\" ng-if=\"col.cls === 'pocket'\">\n";
-                table += "{{col.c ? col.c.barcode : ''}}\n";
-                table += "{{col.c ? col.c['call_number.label'] : ''}}\n";
-                table += "{{col.c ? get_bib_for(col.c).author : ''}}\n";
-                table += "{{col.c ? (get_bib_for(col.c).title | wrap:28:'once':'  ') : ''}}\n";
-                table += "</pre>\n";
-                table += "</td>\n"
-                table += "</tr>\n";
-                table += "</table>";
-                var comments = html.match(/\<\!\-\-(?:(?!\-\-\>)(?:.|\s))*\-\-\>\s*/g);
-                html = html.replace(/\<\!\-\-(?:(?!\-\-\>)(?:.|\s))*\-\-\>\s*/g, '');
-                var style = html.match(/\<style[^\>]*\>(?:(?!\<\/style\>)(?:.|\s))*\<\/style\>\s*/gi);
-                var output = (comments ? comments.join("\n") : "") + (style ? style.join("\n") : "") + table;
-                output = output.replace(/\n+/, "\n");
-                $scope.print.template_content = output;
-            }
+            var d = new Date(); //Added to table ID with 'eg_plt_' to cause $complie on $scope.print.template_content to fire due to template content change.
+            var table = "<table id=\"eg_plt_" + d.getTime().toString() + "_{{$index}}\" eg-print-label-table style=\"border-collapse: collapse; border: 0 solid transparent; border-spacing: 0; margin: {{$index === 0 ? toolbox_settings.page.margins.top.size : 0}} 0 0 0;\" class=\"custom-label-table{{$index % toolbox_settings.page.dimensions.rows === 0 && $index > 0 && toolbox_settings.feed_option.selected === 'sheet' ? ' page-break' : ''}}\" ng-init=\"parentIndex = $index\" ng-repeat=\"row in label_output_copies\">\n";
+            table += "<tr>\n";
+            table += "<td style=\"border: 0 solid transparent; padding: {{parentIndex % toolbox_settings.page.dimensions.rows === 0 && toolbox_settings.feed_option.selected === 'sheet' && parentIndex > 0 ? toolbox_settings.page.space_between_labels.vertical.size : parentIndex > 0 ? toolbox_settings.page.space_between_labels.vertical.size : 0}} 0 0 {{$index === 0 ? toolbox_settings.page.margins.left.size : col.styl ? col.styl : toolbox_settings.page.space_between_labels.horizontal.size}};\" ng-repeat=\"col in row.columns\">\n";
+            table += "<pre class=\"{{col.cls}}\" style=\"border: none; margin-bottom: 0; margin-top: 0; overflow: hidden;\" ng-if=\"col.cls === 'spine'\">\n";
+            table += "{{col.c ? get_cn_for(col.c) : ''}}";
+            table += "</pre>\n";
+            table += "<pre class=\"{{col.cls}}{{parentIndex % toolbox_settings.page.dimensions.rows === 0 && parentIndex > 0 && toolbox_settings.feed_option.selected === 'sheet' ? ' page-break' : ''}}\" style=\"border: none;  margin-bottom: 0; margin-top: 0; overflow: hidden;\" ng-if=\"col.cls === 'pocket'\">\n";
+            table += "{{col.c ? col.c.barcode : ''}}\n";
+            table += "{{col.c ? col.c['call_number.label'] : ''}}\n";
+            table += "{{col.c ? get_bib_for(col.c).author : ''}}\n";
+            table += "{{col.c ? (get_bib_for(col.c).title | wrap:28:'once':'  ') : ''}}\n";
+            table += "</pre>\n";
+            table += "</td>\n"
+            table += "</tr>\n";
+            table += "</table>";
+            var comments = html.match(/\<\!\-\-(?:(?!\-\-\>)(?:.|\s))*\-\-\>\s*/g);
+            html = html.replace(/\<\!\-\-(?:(?!\-\-\>)(?:.|\s))*\-\-\>\s*/g, "");
+            var style = html.match(/\<style[^\>]*\>(?:(?!\<\/style\>)(?:.|\s))*\<\/style\>\s*/gi);
+            var output = (style ? style.join("\n") : "") + (comments ? comments.join("\n") : "") + table;
+            output = output.replace(/\n+/, "\n");
+            $scope.print.template_content = output;
+            $scope.save_locally();
         }
     }
+
+    $scope.redraw_label_table = function () {
+        var d = new Date(); //Added to table ID with 'eg_plt_' to cause $complie on $scope.print.template_content to fire due to template content change.
+        var table = "<table id=\"eg_plt_" + d.getTime().toString() + "\"\></table>\n";
+        $scope.print.template_content += table;
+        $scope.create_print_label_table();
+    }
+
+    $scope.$watch('preview_scope.toolbox_settings.page.dimensions.columns',
+        function (newVal, oldVal) {
+            if (newVal && newVal != oldVal && $scope.preview_scope) {
+                $scope.redraw_label_table();
+            }
+        }
+    );
 
     $scope.$watch('print.cn_template_content', function (newVal, oldVal) {
         if (newVal && newVal != oldVal) {
@@ -725,7 +745,9 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
 
 .filter('cn_wrap', function () {
     return function (input, w, h, wrap_type) {
-        var names;
+        var addedElements = 0;
+        /* Pattern matches for LC ([0]) and non-LC ([1]) CNs */
+        var patterns = [/^([A-Z]{1,3})\s*(\d{1,4}(?:\.*\d{1,3})?)\s*(\d[A-Z0-9]{0,3})?(\.*[A-Z]\d{1,3})?(\d[A-Z0-9]{0,3})?([A-Z]\d{1,3})?(.*)?/i, /^([A-Z]+)?\s*(\d+(?:\.\d+)?)\s*(.*)?$/i];
         var prefix = input[0];
         var callnum = input[1];
         var suffix = input[2];
@@ -733,78 +755,70 @@ function ($scope, $q, $window, $routeParams, $location, $timeout, egCore, egNet,
         if (!w) { w = 8; }
         if (!h) { h = 9; }
 
-        /* handle spine labels differently if using LC */
-        if (wrap_type == 'lc' || wrap_type == 3) {
-            /* Establish a pattern where every return value should be isolated on its own line 
-               on the spine label: subclass letters, subclass numbers, cutter numbers, trailing stuff (date) */
-            var patt1 = /^([A-Z]{1,3})\s*(\d+(?:\.\d+)?)\s*(\.[A-Z]\d*)\s*([A-Z]\d*)?\s*(\d\d\d\d(?:-\d\d\d\d)?)?\s*(.*)$/i;
-            var result = callnum.match(patt1);
-            if (result) {
-                callnum = result.slice(1).join('\t');
-            } else {
-                callnum = callnum.split(/\s+/).join('\t');
-            }
-
-            /* If result is null, leave callnum alone. Can't parse this malformed call num */
+        var cn_patt; /* <- regex from patterns to use based on wrap_type */
+        var z = 3; /* <-Text match position in patterns for variable text (7th position in LC regex pattern); default to non-LC (3rd position in non-LC regex pattern) */
+        if (wrap_type === 3 || wrap_type === 'lc') {
+            cn_patt = patterns[0];
+            z = 7;
         } else {
-            callnum = callnum.split(/\s+/).join('\t');
+            cn_patt = patterns[1];
         }
 
-        if (prefix) {
-            callnum = prefix + '\t' + callnum;
+        callnum = callnum.replace(/^\s+|\s+$/, "");
+
+
+        var result = callnum.split(/\s+/);
+        if (!result) {
+            var hasDigits = /\d/;
+            var hasSpace = /\s/;
+            if (!hasDigits.test(callnum) && hasSpace.test(callnum)) {
+                result = callnum.split(/\s+/);
+            } else {
+                result = [];
+                divideOnCharLen(callnum, result, 0, 0);
+            }
         }
-        if (suffix) {
-            callnum += '\t' + suffix;
+        prefix ? result.splice(0, 0, prefix) : false;
+        suffix ? result.push(suffix) : false;
+
+        /* Give each line a final check and cleanup if it exceeds width of 'w' */
+        addedElements = 0;
+        for (var i = 0; i < result.length; i++) {
+            if (result[i]) {
+                var dec_test = /(\d+)\.(\d+)/;
+                if (dec_test.test(result[i])) {
+                    var dec_split = result[i].match(dec_test);
+                    result.splice(i, 1, dec_split[1], "." + dec_split[2]);
+                }
+                divideOnCharLen(result[i], result, i, addedElements);
+            }
         }
+        var output = [];
+        for (var j = 0; j < result.length; j++) {
+            result[j] ? result[j] = result[j].replace(/^\s*(.*?)\s*$/, "$1") : false;
+            result[j] ? output.push(result[j]) : false;
+        }
+        output = output.slice(0, h); /*Limit lines to height in org unit settings (or default) */
 
-        /* At this point, the call number pieces are separated by tab characters.  This allows
-        *  some space-containing constructs like "v. 1" to appear on one line
-        */
-        callnum = callnum.replace(/\t\t/g, '\t');  /* Squeeze out empties */
-        names = callnum.split('\t');
-        var j = 0; var tb = [];
-        while (j < h) {
+        return output.join('\n');
 
-            /* spine */
-            if (j < w) {
-
-                var name = names.shift();
-                if (name) {
-                    name = String(name);
-
-                    /* if the name is greater than the label width... */
-                    if (name.length > w) {
-                        /* then try to split it on periods */
-                        var sname = name.split(/\./);
-                        if (sname.length > 1) {
-                            /* if we can, then put the periods back in on each splitted element */
-                            if (name.match(/^\./)) sname[0] = '.' + sname[0];
-                            for (var k = 1; k < sname.length; k++) sname[k] = '.' + sname[k];
-                            /* and put all but the first one back into the names array */
-                            names = sname.slice(1).concat(names);
-                            /* if the name fragment is still greater than the label width... */
-                            if (sname[0].length > w) {
-                                /* then just truncate and throw the rest back into the names array */
-                                tb[j] = sname[0].substr(0, w);
-                                names = [sname[0].substr(w)].concat(names);
-                            } else {
-                                /* otherwise we're set */
-                                tb[j] = sname[0];
-                            }
-                        } else {
-                            /* if we can't split on periods, then just truncate and throw the rest back into the names array */
-                            tb[j] = name.substr(0, w);
-                            names = [name.substr(w)].concat(names);
-                        }
+        function divideOnCharLen(val, arr, index, incr) {
+            var x = 1;
+            while ((val.length / x) > w) {
+                x++;
+            }
+            var charMatch = val.match(new RegExp(".{1," + Math.ceil((val.length / x)) + "}", "g"));
+            if (charMatch) {
+                for (var t = 0; t < charMatch.length; t++) {
+                    if (t === 0) {
+                        arr[index] = charMatch[t];
                     } else {
-                        /* otherwise we're set */
-                        tb[j] = name;
+                        arr.splice((index + t), 0, charMatch[t]);
+                        incr++;
                     }
                 }
             }
-            j++;
         }
-        return tb.join('\n');
     }
 })
 
